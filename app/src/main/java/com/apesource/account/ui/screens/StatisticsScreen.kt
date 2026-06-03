@@ -23,6 +23,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.apesource.account.data.entity.Bill
 import com.apesource.account.ui.theme.*
 import com.apesource.account.ui.viewmodel.AccountViewModel
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -50,18 +51,29 @@ fun StatisticsScreen(
         else -> viewModel.getMonthRange()
     }
     
-    val expense by viewModel.getTotalExpense(startTime, endTime).collectAsState(initial = 0.0)
-    val income by viewModel.getTotalIncome(startTime, endTime).collectAsState(initial = 0.0)
+    var expense by remember { mutableStateOf(0.0) }
+    var income by remember { mutableStateOf(0.0) }
     val balance = income + expense
     
-    val expenseStats by viewModel.getCategoryStatistics(startTime, endTime, "expense").collectAsState(initial = emptyMap())
-    val incomeStats by viewModel.getCategoryStatistics(startTime, endTime, "income").collectAsState(initial = emptyMap())
+    var expenseStats by remember { mutableStateOf(emptyMap<String, Double>()) }
+    var incomeStats by remember { mutableStateOf(emptyMap<String, Double>()) }
     
-    val expenseTrend by viewModel.getDailyTrend(startTime, endTime, "expense").collectAsState(initial = emptyList())
-    val incomeTrend by viewModel.getDailyTrend(startTime, endTime, "income").collectAsState(initial = emptyList())
+    var expenseTrend by remember { mutableStateOf(emptyList<Pair<Long, Double>>()) }
+    var incomeTrend by remember { mutableStateOf(emptyList<Pair<Long, Double>>()) }
     
-    val expenseRanking by viewModel.getBillRanking(startTime, endTime, "expense").collectAsState(initial = emptyList())
-    val incomeRanking by viewModel.getBillRanking(startTime, endTime, "income").collectAsState(initial = emptyList())
+    var expenseRanking by remember { mutableStateOf(emptyList<Bill>()) }
+    var incomeRanking by remember { mutableStateOf(emptyList<Bill>()) }
+    
+    LaunchedEffect(startTime, endTime) {
+        launch { viewModel.getTotalExpense(startTime, endTime).collect { expense = it } }
+        launch { viewModel.getTotalIncome(startTime, endTime).collect { income = it } }
+        launch { viewModel.getCategoryStatistics(startTime, endTime, "expense").collect { expenseStats = it } }
+        launch { viewModel.getCategoryStatistics(startTime, endTime, "income").collect { incomeStats = it } }
+        launch { viewModel.getDailyTrend(startTime, endTime, "expense").collect { expenseTrend = it } }
+        launch { viewModel.getDailyTrend(startTime, endTime, "income").collect { incomeTrend = it } }
+        launch { viewModel.getBillRanking(startTime, endTime, "expense").collect { expenseRanking = it } }
+        launch { viewModel.getBillRanking(startTime, endTime, "income").collect { incomeRanking = it } }
+    }
     
     val chartTotal = when (chartTab) {
         0 -> Math.abs(expense)

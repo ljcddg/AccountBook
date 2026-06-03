@@ -279,7 +279,7 @@ fun AddBillDialog(
                                             amountValue
                                         }
                                         val newBill = Bill(
-                                            id = bill?.id ?: 0,
+                                            id = bill?.id ?: System.currentTimeMillis(),
                                             type = type,
                                             categoryName = category.name,
                                             categoryIcon = category.icon,
@@ -316,7 +316,7 @@ fun AddBillDialog(
                                             amountValue
                                         }
                                         val newBill = Bill(
-                                            id = bill?.id ?: 0,
+                                            id = bill?.id ?: System.currentTimeMillis(),
                                             type = type,
                                             categoryName = category.name,
                                             categoryIcon = category.icon,

@@ -31,6 +31,7 @@ import com.apesource.account.ui.components.CategorySelectDialog
 import com.apesource.account.ui.theme.*
 import com.apesource.account.ui.viewmodel.AccountViewModel
 import com.apesource.account.utils.IconUtils
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import java.text.SimpleDateFormat
@@ -66,11 +67,19 @@ fun HomeScreen(
     val selectedDayRange = remember(selectedDayOffset) { viewModel.getSelectedDayRange() }
     val (dayStart, dayEnd) = selectedDayRange
     
-    val monthExpense by viewModel.getTotalExpense(monthStart, monthEnd).collectAsState(initial = 0.0)
-    val monthIncome by viewModel.getTotalIncome(monthStart, monthEnd).collectAsState(initial = 0.0)
-    val selectedDayBills by viewModel.getBillsByDate(dayStart, dayEnd).collectAsState(initial = emptyList())
-    
-    val periodBills by viewModel.getBillsByDateRange(monthStart, monthEnd).collectAsState(initial = emptyList())
+    var monthExpense by remember { mutableStateOf(0.0) }
+    var monthIncome by remember { mutableStateOf(0.0) }
+    var selectedDayBills by remember { mutableStateOf(emptyList<Bill>()) }
+    var periodBills by remember { mutableStateOf(emptyList<Bill>()) }
+
+    LaunchedEffect(monthStart, monthEnd) {
+        launch { viewModel.getTotalExpense(monthStart, monthEnd).collect { monthExpense = it } }
+        launch { viewModel.getTotalIncome(monthStart, monthEnd).collect { monthIncome = it } }
+        launch { viewModel.getBillsByDateRange(monthStart, monthEnd).collect { periodBills = it } }
+    }
+    LaunchedEffect(dayStart, dayEnd) {
+        viewModel.getBillsByDate(dayStart, dayEnd).collect { selectedDayBills = it }
+    }
     
     val showAddBillDialog by viewModel.showAddBillDialog.collectAsState()
     val budget by viewModel.monthlyBudget.collectAsState()

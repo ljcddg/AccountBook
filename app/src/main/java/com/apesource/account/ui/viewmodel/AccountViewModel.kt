@@ -66,6 +66,15 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
         if (savedAccounts.isEmpty()) {
             preferencesHelper.saveAccounts(getDefaultAccounts())
         }
+        // 修复历史数据中 id=0 的账单，为它们分配唯一 ID
+        val billsNeedFix = _bills.value.any { it.id == 0L }
+        if (billsNeedFix) {
+            _bills.value = _bills.value.map { bill ->
+                if (bill.id == 0L) bill.copy(id = System.currentTimeMillis() + bill.hashCode())
+                else bill
+            }
+            preferencesHelper.saveBills(_bills.value)
+        }
     }
 
     private val _selectedTab = MutableStateFlow(0)
@@ -424,7 +433,8 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
         }
 
     fun insertBill(bill: Bill) = viewModelScope.launch {
-        _bills.value = _bills.value + bill
+        val billWithId = if (bill.id == 0L) bill.copy(id = System.currentTimeMillis()) else bill
+        _bills.value = _bills.value + billWithId
         preferencesHelper.saveBills(_bills.value)
     }
 
