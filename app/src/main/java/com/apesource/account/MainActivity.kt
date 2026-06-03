@@ -1,5 +1,6 @@
 package com.apesource.account
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -25,13 +26,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.util.*
 import com.apesource.account.data.entity.Bill
 import com.apesource.account.ui.screens.*
-import com.apesource.account.ui.theme.AccountTheme
+import com.apesource.account.ui.theme.*
 import com.apesource.account.ui.viewmodel.AccountViewModel
 import com.apesource.account.ui.viewmodel.SimpleAccount
 import kotlinx.coroutines.launch
@@ -203,11 +205,23 @@ fun DrawerContent(
             .padding(vertical = 16.dp)
     ) {
         DrawerHeader()
-        CalendarSection()
+        
+        val recordDays = remember(bills) { viewModel.getRecordDaysCount() }
+        val totalRecords = remember(bills) { viewModel.getTotalRecordCount() }
+        val consecutiveDays = remember(bills) { viewModel.getMaxConsecutiveDays() }
+        val billDays = remember(bills) {
+            val cal = Calendar.getInstance()
+            viewModel.getBillDaysInMonth(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1)
+        }
+        
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        CalendarSection(billDays = billDays)
+        
         StatsSection(
-            recordDays = viewModel.getRecordDaysCount(),
-            totalRecords = viewModel.getTotalRecordCount(),
-            consecutiveDays = viewModel.getMaxConsecutiveDays()
+            recordDays = recordDays,
+            totalRecords = totalRecords,
+            consecutiveDays = consecutiveDays
         )
         Divider()
         DrawerMenu(onNavigate = onNavigate)
@@ -245,6 +259,7 @@ fun DrawerHeader() {
 @Composable
 fun DrawerMenu(onNavigate: (String) -> Unit) {
     val context = LocalContext.current
+    var showFeedbackDialog by remember { mutableStateOf(false) }
     val menuItems = listOf(
         "图表统计" to Icons.Default.BarChart,
         "我的物品" to Icons.Default.Inventory2,
@@ -296,16 +311,7 @@ fun DrawerMenu(onNavigate: (String) -> Unit) {
                 onClick = {
                     when (label) {
                         "社区公约" -> onNavigate("communityGuidelines")
-                        "意见反馈" -> {
-                            val intent = Intent(Intent.ACTION_SENDTO).apply {
-                                data = Uri.parse("mailto:3422183588@qq.com")
-                            }
-                            try {
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "未找到邮件应用", Toast.LENGTH_SHORT).show()
-                            }
-                        }
+                        "意见反馈" -> showFeedbackDialog = true
                         "设置" -> onNavigate("settings")
                     }
                 },
@@ -313,10 +319,60 @@ fun DrawerMenu(onNavigate: (String) -> Unit) {
             )
         }
     }
+
+    if (showFeedbackDialog) {
+        val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        AlertDialog(
+            onDismissRequest = { showFeedbackDialog = false },
+            title = { Text("意见反馈", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text(
+                        text = "请发送邮件至以下邮箱反馈意见：",
+                        fontSize = 14.sp,
+                        color = Color(0xFF666666)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFFF5F5F5)
+                    ) {
+                        Text(
+                            text = "3422183588@qq.com",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Primary,
+                            modifier = Modifier.padding(16.dp),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        clipboardManager.setPrimaryClip(
+                            android.content.ClipData.newPlainText("email", "3422183588@qq.com")
+                        )
+                        Toast.makeText(context, "邮箱地址已复制", Toast.LENGTH_SHORT).show()
+                        showFeedbackDialog = false
+                    }
+                ) {
+                    Text("复制邮箱")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showFeedbackDialog = false }) {
+                    Text("关闭")
+                }
+            }
+        )
+    }
 }
 
 @Composable
-fun CalendarSection() {
+fun CalendarSection(billDays: Set<Int> = emptySet()) {
     val calendar = Calendar.getInstance()
     val year = calendar.get(Calendar.YEAR)
     val month = calendar.get(Calendar.MONTH) + 1
@@ -376,17 +432,29 @@ fun CalendarSection() {
                                 Box(modifier = Modifier.size(24.dp))
                             } else {
                                 val isToday = day == today
+                                val hasBill = day in billDays
                                 Box(
                                     modifier = Modifier
                                         .size(24.dp)
                                         .clip(CircleShape)
-                                        .background(if (isToday) Color(0xFFFF9800) else Color.Transparent),
+                                        .background(
+                                            when {
+                                                isToday -> Color(0xFFFF9800)
+                                                hasBill -> Color(0xFFFF9800).copy(alpha = 0.15f)
+                                                else -> Color.Transparent
+                                            }
+                                        ),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
                                         text = day.toString(),
                                         fontSize = 12.sp,
-                                        color = if (isToday) Color.White else Color(0xFF333333)
+                                        color = when {
+                                            isToday -> Color.White
+                                            hasBill -> Color(0xFFFF9800)
+                                            else -> Color(0xFF333333)
+                                        },
+                                        fontWeight = if (hasBill || isToday) FontWeight.Bold else FontWeight.Normal
                                     )
                                 }
                                 day++

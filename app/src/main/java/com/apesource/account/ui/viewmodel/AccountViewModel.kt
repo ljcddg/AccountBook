@@ -899,6 +899,17 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
         return _bills.value.size
     }
 
+    /** 获取指定月份中有账单记录的日期集合 */
+    fun getBillDaysInMonth(year: Int, month: Int): Set<Int> {
+        val cal = Calendar.getInstance()
+        return _bills.value.mapNotNull { bill ->
+            cal.timeInMillis = bill.dateTime
+            if (cal.get(Calendar.YEAR) == year && cal.get(Calendar.MONTH) + 1 == month) {
+                cal.get(Calendar.DAY_OF_MONTH)
+            } else null
+        }.toSet()
+    }
+
     fun getRecordDaysCount(): Int {
         val days = _bills.value.map { getStartOfDay(it.dateTime) }.distinct()
         return days.size

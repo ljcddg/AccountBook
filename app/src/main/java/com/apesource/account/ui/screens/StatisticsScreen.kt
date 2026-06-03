@@ -15,6 +15,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -46,9 +47,9 @@ fun StatisticsScreen(
     
     val (startTime, endTime) = when (selectedPeriod) {
         0 -> viewModel.getWeekRange()
-        1 -> viewModel.getMonthRange()
+        1 -> viewModel.getMonthRange(offset = periodOffset)
         2 -> viewModel.getYearRange()
-        else -> viewModel.getMonthRange()
+        else -> viewModel.getMonthRange(offset = periodOffset)
     }
     
     var expense by remember { mutableStateOf(0.0) }
@@ -612,6 +613,7 @@ fun DailyTrendChart(
     }
     val maxValue = allValues.maxOrNull()?.coerceAtLeast(1.0) ?: 1.0
     
+    val yAxisLabelWidth = 48.dp
     val padding = 8.dp
     val barWidth = when (periodType) {
         0 -> 30.dp
@@ -620,86 +622,155 @@ fun DailyTrendChart(
         else -> 12.dp
     }
     
-    Canvas(modifier = Modifier.fillMaxWidth().height(160.dp)) {
-        val canvasWidth = size.width - padding.toPx() * 2
-        val canvasHeight = size.height - padding.toPx() * 2 - 20.dp.toPx()
-        
-        val maxBarArea = if (showBalance) canvasHeight / 2f else canvasHeight
-        val centerY = padding.toPx() + canvasHeight / 2f
-        
-        if (showBalance) {
-            drawLine(
-                color = Divider,
-                start = Offset(padding.toPx(), centerY),
-                end = Offset(size.width - padding.toPx(), centerY),
-                strokeWidth = 1.dp.toPx()
-            )
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val yLabelWidthPx = with(density) { yAxisLabelWidth.toPx() }
+    val paddingPx = with(density) { padding.toPx() }
+    val textPaint = android.graphics.Paint().apply {
+        color = android.graphics.Color.parseColor("#999999")
+        textSize = with(density) { 9.sp.toPx() }
+        textAlign = android.graphics.Paint.Align.RIGHT
+        isAntiAlias = true
+    }
+    
+    Row(modifier = Modifier.fillMaxWidth()) {
+        // Y 轴标签区
+        Box(
+            modifier = Modifier
+                .width(yAxisLabelWidth)
+                .height(160.dp)
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val canvasHeight = size.height - paddingPx * 2 - 20.dp.toPx()
+                val chartTop = paddingPx
+                val chartBottom = chartTop + canvasHeight
+                
+                // 绘制 4 条参考线和标签
+                val intervals = 4
+                for (i in 0..intervals) {
+                    val fraction = i.toFloat() / intervals
+                    val y = chartBottom - fraction * canvasHeight
+                    val labelValue = (maxValue * fraction)
+                    
+                    // 参考线
+                    drawLine(
+                        color = Divider,
+                        start = Offset(size.width - paddingPx, y),
+                        end = Offset(size.width, y),
+                        strokeWidth = 1.dp.toPx()
+                    )
+                    
+                    // 标签
+                    val label = when {
+                        labelValue >= 10000 -> String.format("%.1f万", labelValue / 10000)
+                        labelValue >= 1000 -> String.format("%.0f", labelValue)
+                        else -> String.format("%.0f", labelValue)
+                    }
+                    drawContext.canvas.nativeCanvas.drawText(
+                        label,
+                        size.width - paddingPx - 4.dp.toPx(),
+                        y + textPaint.textSize / 3,
+                        textPaint
+                    )
+                }
+            }
         }
         
-        for (unit in 1..totalUnits) {
-            val index = unit - 1
-            val x = if (totalUnits > 1) {
-                padding.toPx() + index * (canvasWidth / (totalUnits - 1))
-            } else {
-                padding.toPx() + canvasWidth / 2
-            }
-            val value = dataMap.entries.find { 
-                val cal = Calendar.getInstance()
-                cal.timeInMillis = it.key
-                when (periodType) {
-                    0 -> cal.get(Calendar.DAY_OF_WEEK) == (unit % 7 + 1)
-                    1 -> cal.get(Calendar.DAY_OF_MONTH) == unit
-                    2 -> cal.get(Calendar.MONTH) + 1 == unit
-                    else -> cal.get(Calendar.DAY_OF_MONTH) == unit
-                }
-            }?.value ?: 0.0
+        // 柱状图区
+        Canvas(
+            modifier = Modifier
+                .weight(1f)
+                .height(160.dp)
+        ) {
+            val canvasWidth = size.width - paddingPx * 2
+            val canvasHeight = size.height - paddingPx * 2 - 20.dp.toPx()
             
-            drawRoundRect(
-                color = if (showBalance) Divider.copy(alpha = 0.3f) else ExpenseColor.copy(alpha = 0.1f),
-                topLeft = Offset(x - barWidth.toPx() / 2, padding.toPx()),
-                size = Size(barWidth.toPx(), canvasHeight),
-                cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
-            )
+            val maxBarArea = if (showBalance) canvasHeight / 2f else canvasHeight
+            val centerY = paddingPx + canvasHeight / 2f
+            val chartBottom = paddingPx + canvasHeight
             
-            if (value != 0.0) {
-                val barHeight = (Math.abs(value) / maxValue).toFloat() * maxBarArea * 0.8f
-                val color = if (showBalance) {
-                    if (value >= 0) IncomeColor else ExpenseColor
-                } else {
-                    ExpenseColor
-                }
+            // Y 轴参考线
+            val intervals = 4
+            for (i in 0..intervals) {
+                val fraction = i.toFloat() / intervals
+                val y = chartBottom - fraction * canvasHeight
                 
-                if (showBalance) {
-                    if (value >= 0) {
-                        drawRoundRect(
-                            color = color,
-                            topLeft = Offset(x - barWidth.toPx() / 2, centerY - barHeight),
-                            size = Size(barWidth.toPx(), barHeight),
-                            cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
-                        )
+                drawLine(
+                    color = Divider.copy(alpha = 0.3f),
+                    start = Offset(paddingPx, y),
+                    end = Offset(size.width - paddingPx, y),
+                    strokeWidth = 1.dp.toPx()
+                )
+            }
+            
+            if (showBalance) {
+                drawLine(
+                    color = Divider,
+                    start = Offset(paddingPx, centerY),
+                    end = Offset(size.width - paddingPx, centerY),
+                    strokeWidth = 1.dp.toPx()
+                )
+            }
+            
+            for (unit in 1..totalUnits) {
+                val index = unit - 1
+                val x = if (totalUnits > 1) {
+                    paddingPx + index * (canvasWidth / (totalUnits - 1))
+                } else {
+                    paddingPx + canvasWidth / 2
+                }
+                val value = dataMap.entries.find { 
+                    val cal = Calendar.getInstance()
+                    cal.timeInMillis = it.key
+                    when (periodType) {
+                        0 -> cal.get(Calendar.DAY_OF_WEEK) == (unit % 7 + 1)
+                        1 -> cal.get(Calendar.DAY_OF_MONTH) == unit
+                        2 -> cal.get(Calendar.MONTH) + 1 == unit
+                        else -> cal.get(Calendar.DAY_OF_MONTH) == unit
+                    }
+                }?.value ?: 0.0
+                
+                if (value != 0.0) {
+                    val barHeight = (Math.abs(value) / maxValue).toFloat() * maxBarArea * 0.8f
+                    val color = if (showBalance) {
+                        if (value >= 0) IncomeColor else ExpenseColor
                     } else {
+                        ExpenseColor
+                    }
+                    
+                    if (showBalance) {
+                        if (value >= 0) {
+                            drawRoundRect(
+                                color = color,
+                                topLeft = Offset(x - barWidth.toPx() / 2, centerY - barHeight),
+                                size = Size(barWidth.toPx(), barHeight),
+                                cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+                            )
+                        } else {
+                            drawRoundRect(
+                                color = color,
+                                topLeft = Offset(x - barWidth.toPx() / 2, centerY),
+                                size = Size(barWidth.toPx(), barHeight),
+                                cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+                            )
+                        }
+                    } else {
+                        val y = chartBottom - barHeight
                         drawRoundRect(
                             color = color,
-                            topLeft = Offset(x - barWidth.toPx() / 2, centerY),
+                            topLeft = Offset(x - barWidth.toPx() / 2, y),
                             size = Size(barWidth.toPx(), barHeight),
                             cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
                         )
                     }
-                } else {
-                    val y = padding.toPx() + canvasHeight - barHeight
-                    drawRoundRect(
-                        color = color,
-                        topLeft = Offset(x - barWidth.toPx() / 2, y),
-                        size = Size(barWidth.toPx(), barHeight),
-                        cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
-                    )
                 }
             }
         }
     }
     
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = yAxisLabelWidth),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         markedUnits.forEach { unit ->
