@@ -5,8 +5,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -17,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,6 +50,7 @@ fun AssetScreen(
 
     var selectedCardIndex by remember { mutableStateOf(0) }
     var accountToDelete by remember { mutableStateOf<SimpleAccount?>(null) }
+    var editingAccountDetails by remember { mutableStateOf<SimpleAccount?>(null) }
     
     Scaffold(
         topBar = {
@@ -178,8 +183,9 @@ fun AssetScreen(
             items(accounts.filter { it.type == "asset" }) { account ->
                 AccountItem(
                     account = account,
-                    onEdit = { onEditAccount(it) },
-                    onDelete = { accountToDelete = it }
+                    onCardClick = { editingAccountDetails = account },
+                    onEdit = { onEditAccount(account) },
+                    onDelete = { accountToDelete = account }
                 )
             }
 
@@ -195,8 +201,9 @@ fun AssetScreen(
             items(accounts.filter { it.type == "liability" }) { account ->
                 AccountItem(
                     account = account,
-                    onEdit = { onEditAccount(it) },
-                    onDelete = { accountToDelete = it }
+                    onCardClick = { editingAccountDetails = account },
+                    onEdit = { onEditAccount(account) },
+                    onDelete = { accountToDelete = account }
                 )
             }
         }
@@ -222,6 +229,18 @@ fun AssetScreen(
                 TextButton(onClick = { accountToDelete = null }) {
                     Text("取消")
                 }
+            }
+        )
+    }
+
+    // 点击账户卡片弹出详情编辑对话框
+    if (editingAccountDetails != null) {
+        AccountDetailEditDialog(
+            account = editingAccountDetails!!,
+            onDismiss = { editingAccountDetails = null },
+            onSave = { updatedAccount ->
+                viewModel.updateAccount(updatedAccount)
+                editingAccountDetails = null
             }
         )
     }
@@ -424,13 +443,16 @@ fun NetAssetsTrendCardContent(trend: List<Pair<String, Double>>) {
 @Composable
 fun AccountItem(
     account: SimpleAccount,
+    onCardClick: () -> Unit = {},
     onEdit: (SimpleAccount) -> Unit,
     onDelete: (SimpleAccount) -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCardClick() },
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White)
     ) {
@@ -531,4 +553,100 @@ fun AccountItem(
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AccountDetailEditDialog(
+    account: SimpleAccount,
+    onDismiss: () -> Unit,
+    onSave: (SimpleAccount) -> Unit
+) {
+    var accountNumber by remember { mutableStateOf(account.accountNumber) }
+    var balance by remember { mutableStateOf(String.format("%.2f", Math.abs(account.initialBalance))) }
+    var remark by remember { mutableStateOf(account.remark) }
+    val isLiability = account.type == "liability"
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("账户详情", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // 账户名称只读显示
+                OutlinedTextField(
+                    value = account.name,
+                    onValueChange = {},
+                    label = { Text("账户名称") },
+                    enabled = false,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        disabledTextColor = TextPrimary,
+                        disabledBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                        disabledLabelColor = TextSecondary
+                    )
+                )
+
+                OutlinedTextField(
+                    value = accountNumber,
+                    onValueChange = { accountNumber = it },
+                    label = { Text("卡号/账号") },
+                    placeholder = { Text("选填，如卡号后四位") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = balance,
+                    onValueChange = { balance = it.filter { char -> char.isDigit() || char == '.' } },
+                    label = { Text("余额") },
+                    placeholder = { Text("0.00") },
+                    leadingIcon = { Text("¥") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = remark,
+                    onValueChange = { remark = it },
+                    label = { Text("备注") },
+                    placeholder = { Text("选填") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val balanceValue = try {
+                        balance.toDouble()
+                    } catch (e: NumberFormatException) {
+                        0.0
+                    }
+                    onSave(
+                        account.copy(
+                            accountNumber = accountNumber,
+                            initialBalance = if (isLiability) -Math.abs(balanceValue) else Math.abs(balanceValue),
+                            remark = remark
+                        )
+                    )
+                }
+            ) {
+                Text("保存")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
 }

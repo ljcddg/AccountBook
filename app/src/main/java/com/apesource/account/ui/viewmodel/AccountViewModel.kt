@@ -1,14 +1,23 @@
 package com.apesource.account.ui.viewmodel
 
 import android.app.Application
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
+import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.apesource.account.data.entity.Bill
 import com.apesource.account.data.entity.Book
 import com.apesource.account.data.entity.Category
 import com.apesource.account.utils.PreferencesHelper
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -420,7 +429,7 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun deleteBill(bill: Bill) = viewModelScope.launch {
-        _bills.value = _bills.value - bill
+        _bills.value = _bills.value.filter { it.id != bill.id }
         preferencesHelper.saveBills(_bills.value)
     }
 
@@ -687,7 +696,7 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
             val oldAccountIndex = accountsList.indexOfFirst { it.name == oldAccount }
             if (oldAccountIndex != -1) {
                 val oldAcc = accountsList[oldAccountIndex]
-                val reverseOldAmount = if (oldAmount < 0) Math.abs(oldAmount) else -oldAmount
+                val reverseOldAmount = -oldAmount
                 accountsList[oldAccountIndex] = oldAcc.copy(
                     initialBalance = oldAcc.initialBalance + reverseOldAmount
                 )
@@ -696,7 +705,7 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
             val newAccountIndex = accountsList.indexOfFirst { it.name == newAccount }
             if (newAccountIndex != -1) {
                 val newAcc = accountsList[newAccountIndex]
-                val applyNewAmount = if (newAmount < 0) Math.abs(newAmount) else -newAmount
+                val applyNewAmount = newAmount
                 accountsList[newAccountIndex] = newAcc.copy(
                     initialBalance = newAcc.initialBalance + applyNewAmount
                 )
@@ -876,6 +885,58 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun getTotalRecordCount(): Int {
+        return _bills.value.size
+    }
+
+    fun getRecordDaysCount(): Int {
+        val days = _bills.value.map { getStartOfDay(it.dateTime) }.distinct()
+        return days.size
+    }
+
+    fun getMaxConsecutiveDays(): Int {
+        val days = _bills.value.map { getStartOfDay(it.dateTime) }
+            .distinct()
+            .sorted()
+        if (days.isEmpty()) return 0
+
+        var maxStreak = 1
+        var currentStreak = 1
+        val dayMs = 24 * 60 * 60 * 1000L
+
+        for (i in 1 until days.size) {
+            if (days[i] - days[i - 1] == dayMs) {
+                currentStreak++
+                maxStreak = maxOf(maxStreak, currentStreak)
+            } else {
+                currentStreak = 1
+            }
+        }
+
+        // 检查最近连续（包含今天）
+        val todayStart = getStartOfDay(System.currentTimeMillis())
+        val todayStreak = if (days.lastOrNull() == todayStart) {
+            var streak = 1
+            for (i in days.size - 2 downTo 0) {
+                if (days[i + 1] - days[i] == dayMs) streak++ else break
+            }
+            streak
+        } else {
+            val yesterdayStart = todayStart - dayMs
+            if (days.lastOrNull() == yesterdayStart) {
+                var streak = 1
+                for (i in days.size - 2 downTo 0) {
+                    if (days[i + 1] - days[i] == dayMs) streak++ else break
+                }
+                streak
+            } else {
+                0
+            }
+        }
+
+        return todayStreak
+    }
+
     private fun getStartOfDay(timestamp: Long): Long {
         val cal = Calendar.getInstance()
         cal.timeInMillis = timestamp
@@ -884,6 +945,185 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
         cal.set(Calendar.SECOND, 0)
         cal.set(Calendar.MILLISECOND, 0)
         return cal.timeInMillis
+    }
+
+    private val gson = Gson()
+
+    internal data class ExportData(
+        val exportTime: Long = System.currentTimeMillis(),
+        val startTime: Long,
+        val endTime: Long,
+        val billCount: Int,
+        val bills: List<Bill>
+    )
+
+    fun exportBillsAsJson(startTime: Long, endTime: Long): String {
+        val filtered = _bills.value.filter { it.dateTime in startTime..endTime }
+            .sortedByDescending { it.dateTime }
+        val exportData = ExportData(
+            startTime = startTime,
+            endTime = endTime,
+            billCount = filtered.size,
+            bills = filtered
+        )
+        return gson.toJson(exportData)
+    }
+
+    fun importBillsFromJson(json: String): Int {
+        return try {
+            val exportData = gson.fromJson(json, ExportData::class.java)
+            val importedBills = exportData.bills
+            if (importedBills.isEmpty()) return 0
+
+            val existingIds = _bills.value.map { it.id }.toSet()
+            val newBills = importedBills.filter { it.id !in existingIds }.map { bill ->
+                bill.copy(createTime = System.currentTimeMillis())
+            }
+
+            if (newBills.isNotEmpty()) {
+                _bills.value = (_bills.value + newBills).sortedByDescending { it.dateTime }
+                preferencesHelper.saveBills(_bills.value)
+            }
+
+            newBills.size
+        } catch (e: Exception) {
+            -1
+        }
+    }
+
+    fun exportBillsToFile(context: Context, startTime: Long, endTime: Long, fileName: String) {
+        viewModelScope.launch {
+            try {
+                val json = exportBillsAsJson(startTime, endTime)
+                val file = java.io.File(context.cacheDir, fileName)
+                file.writeText(json)
+
+                val uri = FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    file
+                )
+
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "application/json"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(shareIntent, "导出账单"))
+            } catch (e: Exception) {
+                Toast.makeText(context, "导出失败: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    fun importBillsFromUri(context: Context, uri: Uri, onResult: (Int) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val inputStream = context.contentResolver.openInputStream(uri)
+                val reader = BufferedReader(InputStreamReader(inputStream))
+                val json = reader.readText()
+                reader.close()
+
+                val count = importBillsFromJson(json)
+                when {
+                    count > 0 -> {
+                        Toast.makeText(context, "成功导入 $count 条账单", Toast.LENGTH_SHORT).show()
+                        onResult(count)
+                    }
+                    count == 0 -> {
+                        Toast.makeText(context, "没有新的账单需要导入", Toast.LENGTH_SHORT).show()
+                        onResult(0)
+                    }
+                    else -> {
+                        Toast.makeText(context, "导入失败，文件格式不正确", Toast.LENGTH_SHORT).show()
+                        onResult(-1)
+                    }
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "导入失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                onResult(-1)
+            }
+        }
+    }
+
+    fun getPresetTimeRanges(): List<Triple<String, Long, Long>> {
+        val now = Calendar.getInstance()
+
+        val todayStart = now.clone() as Calendar
+        todayStart.set(Calendar.HOUR_OF_DAY, 0)
+        todayStart.set(Calendar.MINUTE, 0)
+        todayStart.set(Calendar.SECOND, 0)
+        todayStart.set(Calendar.MILLISECOND, 0)
+
+        val todayEnd = now.clone() as Calendar
+        todayEnd.set(Calendar.HOUR_OF_DAY, 23)
+        todayEnd.set(Calendar.MINUTE, 59)
+        todayEnd.set(Calendar.SECOND, 59)
+        todayEnd.set(Calendar.MILLISECOND, 999)
+
+        val weekStart = now.clone() as Calendar
+        weekStart.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+        weekStart.set(Calendar.HOUR_OF_DAY, 0)
+        weekStart.set(Calendar.MINUTE, 0)
+        weekStart.set(Calendar.SECOND, 0)
+        weekStart.set(Calendar.MILLISECOND, 0)
+
+        val weekEnd = now.clone() as Calendar
+        weekEnd.set(Calendar.DAY_OF_WEEK, Calendar.SUNDAY)
+        weekEnd.set(Calendar.HOUR_OF_DAY, 23)
+        weekEnd.set(Calendar.MINUTE, 59)
+        weekEnd.set(Calendar.SECOND, 59)
+        weekEnd.set(Calendar.MILLISECOND, 999)
+
+        val monthStart = now.clone() as Calendar
+        monthStart.set(Calendar.DAY_OF_MONTH, 1)
+        monthStart.set(Calendar.HOUR_OF_DAY, 0)
+        monthStart.set(Calendar.MINUTE, 0)
+        monthStart.set(Calendar.SECOND, 0)
+        monthStart.set(Calendar.MILLISECOND, 0)
+
+        val monthEnd = now.clone() as Calendar
+        monthEnd.set(Calendar.DAY_OF_MONTH, monthEnd.getActualMaximum(Calendar.DAY_OF_MONTH))
+        monthEnd.set(Calendar.HOUR_OF_DAY, 23)
+        monthEnd.set(Calendar.MINUTE, 59)
+        monthEnd.set(Calendar.SECOND, 59)
+        monthEnd.set(Calendar.MILLISECOND, 999)
+
+        val yearStart = now.clone() as Calendar
+        yearStart.set(Calendar.DAY_OF_YEAR, 1)
+        yearStart.set(Calendar.HOUR_OF_DAY, 0)
+        yearStart.set(Calendar.MINUTE, 0)
+        yearStart.set(Calendar.SECOND, 0)
+        yearStart.set(Calendar.MILLISECOND, 0)
+
+        val yearEnd = now.clone() as Calendar
+        yearEnd.set(Calendar.DAY_OF_YEAR, yearEnd.getActualMaximum(Calendar.DAY_OF_YEAR))
+        yearEnd.set(Calendar.HOUR_OF_DAY, 23)
+        yearEnd.set(Calendar.MINUTE, 59)
+        yearEnd.set(Calendar.SECOND, 59)
+        yearEnd.set(Calendar.MILLISECOND, 999)
+
+        val allStart = Calendar.getInstance().apply {
+            set(2000, Calendar.JANUARY, 1, 0, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+
+        val allEnd = now.clone() as Calendar
+        allEnd.add(Calendar.YEAR, 10)
+        allEnd.set(Calendar.MONTH, Calendar.DECEMBER)
+        allEnd.set(Calendar.DAY_OF_MONTH, 31)
+        allEnd.set(Calendar.HOUR_OF_DAY, 23)
+        allEnd.set(Calendar.MINUTE, 59)
+        allEnd.set(Calendar.SECOND, 59)
+        allEnd.set(Calendar.MILLISECOND, 999)
+
+        return listOf(
+            Triple("今天", todayStart.timeInMillis, todayEnd.timeInMillis),
+            Triple("本周", weekStart.timeInMillis, weekEnd.timeInMillis),
+            Triple("本月", monthStart.timeInMillis, monthEnd.timeInMillis),
+            Triple("本年", yearStart.timeInMillis, yearEnd.timeInMillis),
+            Triple("全部", allStart.timeInMillis, allEnd.timeInMillis)
+        )
     }
 }
 

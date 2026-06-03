@@ -1,7 +1,11 @@
 package com.apesource.account
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
@@ -19,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -61,6 +66,7 @@ fun AccountApp(viewModel: AccountViewModel = viewModel()) {
                 drawerContainerColor = Color.White
             ) {
                 DrawerContent(
+                    viewModel = viewModel,
                     onNavigate = { screen ->
                         currentScreen = screen
                         scope.launch {
@@ -71,6 +77,19 @@ fun AccountApp(viewModel: AccountViewModel = viewModel()) {
             }
         }
     ) {
+        // 系统返回键处理：非主页时返回主页，主页时退出应用
+        BackHandler(enabled = currentScreen != "home" || selectedBill != null) {
+            when {
+                selectedBill != null -> selectedBill = null
+                currentScreen == "addAccount" || currentScreen == "editAccount" -> {
+                    if (currentScreen == "editAccount") editingAccount = null
+                    currentScreen = "assets"
+                }
+                currentScreen == "bookAdd" -> currentScreen = "bookEdit"
+                else -> currentScreen = "home"
+            }
+        }
+
         when (currentScreen) {
             "statistics" -> {
                 StatisticsScreen(
@@ -90,6 +109,11 @@ fun AccountApp(viewModel: AccountViewModel = viewModel()) {
                     viewModel = viewModel
                 )
             }
+            "communityGuidelines" -> {
+                CommunityGuidelinesScreen(
+                    onBack = { currentScreen = "home" }
+                )
+            }
             "search" -> {
                 SearchScreen(
                     onBack = { currentScreen = "home" },
@@ -107,6 +131,12 @@ fun AccountApp(viewModel: AccountViewModel = viewModel()) {
             "bookAdd" -> {
                 BookAddScreen(
                     onBack = { currentScreen = "bookEdit" },
+                    viewModel = viewModel
+                )
+            }
+            "importExport" -> {
+                ImportExportScreen(
+                    onBack = { currentScreen = "home" },
                     viewModel = viewModel
                 )
             }
@@ -161,7 +191,12 @@ fun AccountApp(viewModel: AccountViewModel = viewModel()) {
 }
 
 @Composable
-fun DrawerContent(onNavigate: (String) -> Unit) {
+fun DrawerContent(
+    viewModel: AccountViewModel,
+    onNavigate: (String) -> Unit
+) {
+    val bills by viewModel.bills.collectAsState()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -169,7 +204,11 @@ fun DrawerContent(onNavigate: (String) -> Unit) {
     ) {
         DrawerHeader()
         CalendarSection()
-        StatsSection()
+        StatsSection(
+            recordDays = viewModel.getRecordDaysCount(),
+            totalRecords = viewModel.getTotalRecordCount(),
+            consecutiveDays = viewModel.getMaxConsecutiveDays()
+        )
         Divider()
         DrawerMenu(onNavigate = onNavigate)
     }
@@ -205,6 +244,7 @@ fun DrawerHeader() {
 
 @Composable
 fun DrawerMenu(onNavigate: (String) -> Unit) {
+    val context = LocalContext.current
     val menuItems = listOf(
         "图表统计" to Icons.Default.BarChart,
         "我的物品" to Icons.Default.Inventory2,
@@ -238,6 +278,7 @@ fun DrawerMenu(onNavigate: (String) -> Unit) {
                         when (label) {
                             "图表统计" -> onNavigate("statistics")
                             "预算设置" -> onNavigate("budget")
+                            "导入导出" -> onNavigate("importExport")
                             else -> {}
                         }
                     }
@@ -254,8 +295,18 @@ fun DrawerMenu(onNavigate: (String) -> Unit) {
                 selected = false,
                 onClick = {
                     when (label) {
+                        "社区公约" -> onNavigate("communityGuidelines")
+                        "意见反馈" -> {
+                            val intent = Intent(Intent.ACTION_SENDTO).apply {
+                                data = Uri.parse("mailto:3422183588@qq.com")
+                            }
+                            try {
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "未找到邮件应用", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                         "设置" -> onNavigate("settings")
-                        else -> {}
                     }
                 },
                 modifier = Modifier.padding(horizontal = 12.dp)
@@ -349,7 +400,11 @@ fun CalendarSection() {
 }
 
 @Composable
-fun StatsSection() {
+fun StatsSection(
+    recordDays: Int,
+    totalRecords: Int,
+    consecutiveDays: Int
+) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -363,9 +418,9 @@ fun StatsSection() {
                 .padding(16.dp),
             horizontalArrangement = Arrangement.SpaceAround
         ) {
-            StatItem(icon = Icons.Default.LocalFireDepartment, label = "坚持记录", value = "1天")
-            StatItem(icon = Icons.Default.List, label = "总记录", value = "10条")
-            StatItem(icon = Icons.Default.TrendingUp, label = "连续记录", value = "1天")
+            StatItem(icon = Icons.Default.LocalFireDepartment, label = "坚持记录", value = "${recordDays}天")
+            StatItem(icon = Icons.Default.List, label = "总记录", value = "${totalRecords}条")
+            StatItem(icon = Icons.Default.TrendingUp, label = "连续记录", value = "${consecutiveDays}天")
         }
     }
 }
